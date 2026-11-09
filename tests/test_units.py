@@ -68,6 +68,7 @@ async def _longest_gap_while(work) -> float:
     running = asyncio.create_task(ticker())
     await asyncio.sleep(0.02)
     await work
+    await asyncio.sleep(0.02)  # let the ticker report the gap it was stuck in
     running.cancel()
     return max(gaps)
 
