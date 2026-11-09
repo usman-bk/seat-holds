@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: seat_holds_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest
+
+      # If a request judges expiry by when it arrived, a seat that has really
+      # expired gets refused. Confirm the suite notices.
+      - name: The lock timing test can fail
+        run: |
+          sed -i 's/select(func.clock_timestamp())/select(func.now())/' app/holds.py
+          git diff --exit-code --quiet app/holds.py && { echo "the edit did not apply"; exit 1; }
+          if uv run pytest tests/test_holds.py::test_expiry_is_judged_when_the_lock_is_won; then
+            echo "expiry read from now() passed, so the test checks nothing"
+            exit 1
+          fi
+          git checkout app/holds.py
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t seat-holds .
+      - name: The image imports the app
+        run: docker run --rm seat-holds python -c "import app.main"
